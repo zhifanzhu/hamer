@@ -146,3 +146,7 @@ dmypy.json
 .pyre/
 /checkpoints/
 /data/
+
+data
+data/
+epic_out/
