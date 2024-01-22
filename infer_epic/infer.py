@@ -4,6 +4,7 @@ import argparse
 import os
 import cv2
 import numpy as np
+import tqdm
 
 from hamer.configs import CACHE_DIR_HAMER
 from hamer.models import HAMER, download_models, load_hamer, DEFAULT_CHECKPOINT
@@ -21,13 +22,14 @@ def main():
     parser.add_argument('--step_size', type=int, default=5, help='Step size for frame extraction')
     parser.add_argument('--dump_dir', type=str, default='data/hamer', help='Directory to dump pose outputs')
     parser.add_argument('--viz', action='store_true', help='Visualize the output')
+    parser.add_argument('--num_workers', type=int, default=0, help='Number of workers for dataloader')
 
     parser.add_argument('--checkpoint', type=str, default=DEFAULT_CHECKPOINT, help='Path to pretrained model checkpoint')
     parser.add_argument('--out_folder', type=str, default='out_demo', help='Output folder to save rendered results')
     parser.add_argument('--side_view', dest='side_view', action='store_true', default=False, help='If set, render side view also')
     parser.add_argument('--full_frame', dest='full_frame', action='store_true', default=True, help='If set, render all people together also')
     parser.add_argument('--save_mesh', dest='save_mesh', action='store_true', default=False, help='If set, save meshes to disk also')
-    parser.add_argument('--batch_size', type=int, default=1, help='Batch size for inference/fitting')
+    parser.add_argument('--batch_size', type=int, default=8, help='Batch size for inference/fitting')
     parser.add_argument('--rescale_factor', type=float, default=2.0, help='Factor for padding the bbox')
     parser.add_argument('--file_type', nargs='+', default=['*.jpg', '*.png'], help='List of file extensions to consider')
 
@@ -50,8 +52,8 @@ def main():
 
     # Run reconstruction on all detected hands
     vid = args.vid
-    dataset = GripDataset(model_cfg, vid=vid, rescale_factor=args.rescale_factor)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=8, shuffle=False, num_workers=0)
+    dataset = GripDataset(model_cfg, vid=vid, rescale_factor=args.rescale_factor, step_size=args.step_size)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     # all_verts = []
     # all_cam_t = []
@@ -59,8 +61,8 @@ def main():
     vid_outdir = os.path.join(args.dump_dir, vid)
     os.makedirs(vid_outdir, exist_ok=True)
 
-    for _i, batch in enumerate(dataloader):
-        print("Progress: [{}/{}]".format(_i, len(dataloader)))
+    for _i, batch in tqdm.tqdm(enumerate(dataloader), total=len(dataloader)):
+        # print("Progress: [{}/{}]".format(_i, len(dataloader)))
         batch = recursive_to(batch, device)
         with torch.no_grad():
             out = model(batch)
@@ -85,14 +87,17 @@ def main():
         betas = pred_mano_params['betas'].cpu()
         for n in range(batch_size):
             # Dumping
-            blob = {
+            params = {
                 'pred_cam': pred_cam_cpu[n],
                 'global_orient': global_orient[n],
                 'hand_pose': hand_pose[n],
                 'betas': betas[n],
             }
             save_path = os.path.join(vid_outdir, f'frame_{frames[n]:010d}.pt')
-            torch.save(blob, save_path)
+            all_params = torch.load(save_path) if os.path.exists(save_path) else {}  # in case there is another hand
+            key = 'left' if batch['right'][n] == 0 else 'right'
+            all_params[key] = params
+            torch.save(all_params, save_path)
 
             if not args.viz:
                 continue
