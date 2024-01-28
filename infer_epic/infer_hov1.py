@@ -11,16 +11,15 @@ from hamer.models import HAMER, download_models, load_hamer, DEFAULT_CHECKPOINT
 from hamer.utils import recursive_to
 from hamer.datasets.vitdet_dataset import ViTDetDataset, DEFAULT_MEAN, DEFAULT_STD
 from hamer.utils.renderer import Renderer, cam_crop_to_full
-from infer_epic.grip_dataset import GripDataset
+from infer_epic.grip_dataset_hov1 import GripDatasetHOV1
 
 LIGHT_BLUE=(0.65098039,  0.74117647,  0.85882353)
 
 
 def main():
     parser = argparse.ArgumentParser(description='HaMeR demo code')
-    parser.add_argument('--vid', type=str, help='Video ID to run inference on')
-    parser.add_argument('--step_size', type=int, default=5, help='Step size for frame extraction')
-    parser.add_argument('--dump_dir', type=str, default='data/hamer_hov2', help='Directory to dump pose outputs')
+    # parser.add_argument('--step_size', type=int, default=5, help='Step size for frame extraction')
+    parser.add_argument('--dump_dir', type=str, default='data/hamer_hov1', help='Directory to dump pose outputs')
     parser.add_argument('--viz', action='store_true', help='Visualize the output')
     parser.add_argument('--num_workers', type=int, default=0, help='Number of workers for dataloader')
 
@@ -51,15 +50,12 @@ def main():
     os.makedirs(args.out_folder, exist_ok=True)
 
     # Run reconstruction on all detected hands
-    vid = args.vid
-    dataset = GripDataset(model_cfg, vid=vid, rescale_factor=args.rescale_factor, step_size=args.step_size)
+    dataset = GripDatasetHOV1(model_cfg, rescale_factor=args.rescale_factor)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     # all_verts = []
     # all_cam_t = []
     # all_right = []
-    vid_outdir = os.path.join(args.dump_dir, vid)
-    os.makedirs(vid_outdir, exist_ok=True)
 
     for _i, batch in tqdm.tqdm(enumerate(dataloader), total=len(dataloader)):
         # print("Progress: [{}/{}]".format(_i, len(dataloader)))
@@ -93,6 +89,9 @@ def main():
                 'hand_pose': hand_pose[n],
                 'betas': betas[n],
             }
+            vid = batch['vid'][n]
+            vid_outdir = os.path.join(args.dump_dir, vid)
+            os.makedirs(vid_outdir, exist_ok=True)
             save_path = os.path.join(vid_outdir, f'frame_{frames[n]:010d}.pt')
             all_params = torch.load(save_path) if os.path.exists(save_path) else {}  # in case there is another hand
             key = 'left' if batch['right'][n] == 0 else 'right'

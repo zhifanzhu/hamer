@@ -19,32 +19,29 @@ DEFAULT_MEAN = 255. * np.array([0.485, 0.456, 0.406])
 DEFAULT_STD = 255. * np.array([0.229, 0.224, 0.225])
 
 
-class GripDataset(torch.utils.data.Dataset):
-    """ EPIC Grasp dataset using HOS v2 boxes
+EPIC_HOA_SIZE = (1920, 1080)
+
+class GripDatasetHOV1(torch.utils.data.Dataset):
+    """ EPIC Grasp dataset using HOS v1 boxes
     batch infer in per-vid basis
     """
 
     def __init__(self,
                  cfg: CfgNode,
-                 vid: str,
-                 step_size=5,
-                #  img_cv2: np.array,
-                #  boxes: np.array,
-                #  right: np.array,
+                 hoa_cache_path='/media/barry/DATA/Zhifan/epic_hor_data/cache/hoa_hbox.pth',
+                 step_size=1,
                  rescale_factor=2.5,
                  train: bool = False,
                  **kwargs):
         super().__init__()
         self.cfg = cfg
-        self.vid = vid
         self.step_size = step_size  # 60FPS / 5 = 12FPS
-        self.hos_root='/media/barry/DATA/Zhifan/Sid-hand-objects/'
-        self.csv_path = 'data/epichor_round3_2447valid_nonempty.csv'
         self.rgb_root='/media/skynet/DATA/Datasets/epic-100/rgb'
-        self.image_format = osp.join(self.rgb_root, '%s/%s/frame_%010d.jpg')  # resolution is 456x256
+        self.csv_path = 'data/epichor_round3_2447valid_nonempty.csv'
+        self.image_format = osp.join(self.rgb_root, '%s/%s/frame_%010d.jpg')
+
+        self.hoa_hbox = torch.load(hoa_cache_path)
         self.data_infos = self.preprocess_data_infos()
-        # self.img_cv2 = img_cv2
-        # self.boxes = boxes
 
         assert train == False, "ViTDetDataset is only for inference"
         self.train = train
@@ -53,64 +50,32 @@ class GripDataset(torch.utils.data.Dataset):
         self.std = 255. * np.array(self.cfg.MODEL.IMAGE_STD)
 
         self.rescale_factor = rescale_factor
-        # Preprocess annotations
-        # boxes = boxes.astype(np.float32)
-        # self.center = (boxes[:, 2:4] + boxes[:, 0:2]) / 2.0
-        # self.scale = rescale_factor * (boxes[:, 2:4] - boxes[:, 0:2]) / 200.0
-        # self.personid = np.arange(len(boxes), dtype=np.int32)
-        # self.right = right.astype(np.float32)
 
     def preprocess_data_infos(self):
-        """ returns: list of (frame, box=(4,), right=0/1)
-        box is xyxy on 456x256 image
-        if no hos hand box in that frame, skip
+        """ returns: list of (vid, frame, box=(4,), right=0/1)
+        return box is xyxy on 456x256 image
         """
-        HAND_BBOX = 'hand_bbox'
-        HAND_SIDE = 'hand_side'
-
         data_infos = []
+
         df = pd.read_csv(self.csv_path)
-        df = df[df['vid'] == self.vid]
-        print(f"Loading HOS: vid={self.vid} has {len(df)} seqs")
-        hos = self.get_hos(self.vid)
-        epic_is_right = {'left hand': 0, 'right hand': 1}
-        hos_is_right = {'left_hand': 0, 'right_hand': 1}
-        for i, row in tqdm.tqdm(df.iterrows(), total=len(df)):
-            st = row['st']
-            ed = row['ed']
-            frames = np.linspace(st, ed, num=(ed+1-st)//self.step_size, endpoint=True, dtype=np.int32)
-            for frame in frames:
-                # Skip if not exist
-                if frame not in hos:
-                    continue
+        box_scale = np.float32([456, 256] * 2) / np.float32([1920, 1080] * 2)
+        for i, row in df.iterrows():
+            mapping = self.hoa_hbox[row['mp4_name']]
+            vid = row['vid']
+            right = 'right' in row.handside
+            for frame, box_xywh in mapping.items():
+                x1, y1, w, h = box_xywh
+                box_xyxy = np.array([x1, y1, x1+w, y1+h]) * box_scale
+                info = (vid, frame, box_xyxy, right)
+                data_infos.append(info)
 
-                preds = hos[frame]
-                # box_scale = np.float32([IMAGE_WIDTH/HOS_WIDTH, IMAGE_HEIGHT/HOS_HEIGHT] * 2)
-                right = epic_is_right[row['handside']]
-                for pred in preds:
-                    if hos_is_right[pred[HAND_SIDE]] != right:
-                        continue
-                    data_infos.append((frame, np.asarray(pred[HAND_BBOX], dtype=np.float32), right))
         return data_infos
-
-    @lru_cache(maxsize=8)
-    def get_hos(self, vid):
-        def hos_mapping(raw_json: dict) -> dict:
-            """ return: {frame[int]: preds[list]} """
-            import re
-            get_int = lambda s : int(re.search('\d{10}', s).group(0))
-            return {get_int(blob['file_name']): blob['predictions'] for blob in raw_json['images'] }
-        hos_path = osp.join(self.hos_root, f'{vid}.json')
-        with open(hos_path, 'r') as fp:
-            hos_dict = hos_mapping(json.load(fp))
-        return hos_dict
 
     def __len__(self) -> int:
         return len(self.data_infos)
 
     def __getitem__(self, idx: int) -> Dict[str, np.array]:
-        vid = self.vid
-        frame, box, right = self.data_infos[idx]
+        vid, frame, box, right = self.data_infos[idx]
         center = (box[2:4] + box[0:2]) / 2.0
         scale = self.rescale_factor * (box[2:4] - box[0:2]) / 200.0
         center_x = center[0]
@@ -165,7 +130,7 @@ if __name__ == '__main__':
     from hamer.models import HAMER, download_models, load_hamer, DEFAULT_CHECKPOINT
     model, model_cfg = load_hamer(DEFAULT_CHECKPOINT)
 
-    dataset = GripDataset(model_cfg, vid='P01_01', rescale_factor=2.0)
+    dataset = GripDatasetHOV1(model_cfg, rescale_factor=2.0)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=8, shuffle=False, num_workers=0)
     # for batch in dataloader:
     #     pass
