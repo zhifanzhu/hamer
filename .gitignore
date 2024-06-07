@@ -9,11 +9,9 @@
 *.tar
 *.tar.gz
 /discord_sandbox/
-/demo_out/
 token_channel.csv
 /_DATA/
 /hamer_training_data/
-/outputs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -147,6 +145,8 @@ dmypy.json
 /checkpoints/
 /data/
 
+.vscode/
 data
 data/
-epic_out/
+/demo_out/
+/outputs/
