@@ -150,3 +150,7 @@ data
 data/
 /demo_out/
 /outputs/
+
+geom_data/
+intermediate_data/
+third-party/
