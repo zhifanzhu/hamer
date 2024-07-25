@@ -19,7 +19,6 @@ from hamer.datasets.utils import (convert_cvimg_to_tensor,
 
 from ekavista.io.slam_reader_basic import RawSLAMReaderBasic
 from ekavista.masks.functions import load_box_from_mask
-# from aria.fork_slam_reader import ForkRawSLAMReader
 
 LIGHT_BLUE=(0.65098039,  0.74117647,  0.85882353)
 
@@ -38,6 +37,7 @@ def parse_args():
     parser.add_argument('--vid', type=str, required=True, help='video-id of the VRS file')
     parser.add_argument('--frame-start', type=int, required=True)
     parser.add_argument('--frame-end', type=int, required=True)
+    parser.add_argument('--from_cache', type=int, required=False, default=1)
     parser.add_argument('--storage-dir', type=str, default='/media/eve/SCRATCH/Zhifan/eka_vista_kit/eka_storage' )
 
     parser.add_argument('--viz', action='store_true', help='Visualize the output')
@@ -53,54 +53,66 @@ def parse_args():
 
 
 class TinyDataset(torch.utils.data.Dataset):
-    def __init__(self, 
-                 vid, 
+    def __init__(self,
+                 vid,
                  storage_dir,
-                 frame_start, 
-                 frame_end):
+                 frame_start,
+                 frame_end,
+                 from_cache=False):
         super().__init__()
         self.vid = vid
         self.reader = RawSLAMReaderBasic(
-            vid, frame_type='mp4', storage_dir=storage_dir, 
-            load_pts=False, load_frame_traj=False, load_gaze=False)
+            vid, frame_type='mp4', storage_dir=storage_dir,
+            load_pts=False, load_frame_traj=False)
         self.frame_start = max(frame_start, 0)
         self.frame_end = min(frame_end, self.reader.num_rgb_frames)
 
+        self.from_cache = from_cache
+        if self.from_cache == 1:
+            print("Load detections from cache.")
+            self.dets_df = pd.read_csv(f'data/{vid}_undistorted_dets.csv')
+        else:
+            print("Load detections online.")
         self.data_infos = self.get_data_infos()
-    
+
     def get_data_infos(self):
         data_infos = []
-        for f in range(self.frame_start, self.frame_end):
+        print("Preparing data_infos.")
+        for f in tqdm.trange(self.frame_start, self.frame_end):
             dets = self.get_det(f)
             for box, lr in dets:
                 data_infos.append((f, box, lr))
         return data_infos
 
     def get_det(self, frame):
-        lbox, rbox = load_box_from_mask(
-            self.vid, frame, self.reader, 
-            undistort=True, ret_mask=False)
-        # ents = self.dets_df[self.dets_df.frame == frame]
-        dets = []
-        if lbox is not None:
-            dets.append((lbox, 0))
-        if rbox is not None:
-            dets.append((rbox, 1))
-        # for i, (_frame, x0, y0, x1, y1, lr) in ents.iterrows():
-        #     box = np.asarray([x0, y0, x1, y1])
-        #     dets.append((box, int(lr)))
+        if self.from_cache:
+            ents = self.dets_df[self.dets_df.frame == frame]
+            dets = []
+            for i, (_frame, x0, y0, x1, y1, right) in ents.iterrows():
+                box = np.asarray([x0, y0, x1, y1], dtype=np.float32)
+                dets.append((box, int(right)))
+        else:
+            # Online
+            lbox, rbox = load_box_from_mask(
+                self.vid, frame, self.reader,
+                undistort=True, ret_mask=False)
+            dets = []
+            if lbox is not None:
+                dets.append((lbox, 0))
+            if rbox is not None:
+                dets.append((rbox, 1))
         return dets
-    
+
     def __len__(self):
         return len(self.data_infos)
-    
+
     def __getitem__(self, idx):
         frame, box, right = self.data_infos[idx]
         img = self.reader.read_mp4_frame(
             frame, undistort=True, ret_timestamp_ns=False)
         item = self.get_data_item(img, box, right)
         item['frame'] = frame
-        return item 
+        return item
 
     def get_data_item(self,
                       img,
@@ -172,8 +184,8 @@ def main():
     renderer = Renderer(model_cfg, faces=model.mano.faces)
 
     dataset = TinyDataset(
-        vid=args.vid, storage_dir=args.storage_dir, frame_start=args.frame_start, 
-        frame_end=args.frame_end, )
+        vid=args.vid, storage_dir=args.storage_dir, frame_start=args.frame_start,
+        frame_end=args.frame_end, from_cache=args.from_cache)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     # Make output directory if it does not exist
@@ -188,12 +200,12 @@ def main():
         multiplier = (2*batch['right']-1)
         pred_cam = out['pred_cam']
         pred_cam[:,1] = multiplier*pred_cam[:,1]
-        box_center = batch["box_center"].float()
-        box_size = batch["box_size"].float()
-        img_size = batch["img_size"].float()
+        # box_center = batch["box_center"].float()
+        # box_size = batch["box_size"].float()
+        # img_size = batch["img_size"].float()
         multiplier = (2*batch['right']-1)
-        scaled_focal_length = model_cfg.EXTRA.FOCAL_LENGTH / model_cfg.MODEL.IMAGE_SIZE * img_size.max()
-        pred_cam_t_full = cam_crop_to_full(pred_cam, box_center, box_size, img_size, scaled_focal_length).detach().cpu().numpy()
+        # scaled_focal_length = model_cfg.EXTRA.FOCAL_LENGTH / model_cfg.MODEL.IMAGE_SIZE * img_size.max()
+        # pred_cam_t_full = cam_crop_to_full(pred_cam, box_center, box_size, img_size, scaled_focal_length).detach().cpu().numpy()
 
         # Render the result
         batch_size = batch['img'].shape[0]
@@ -222,7 +234,7 @@ def main():
 
             # Get filename from path img_path
             img_fn = f'frame_{frames[n]:010d}'
-            person_id = 0
+            person_id = 0 if key == 'left' else 1
             # person_id = int(batch['personid'][n])
             white_img = (torch.ones_like(batch['img'][n]).cpu() - DEFAULT_MEAN[:,None,None]/255) / (DEFAULT_STD[:,None,None]/255)
             input_patch = batch['img'][n].cpu() * (DEFAULT_STD[:,None,None]/255) + (DEFAULT_MEAN[:,None,None]/255)
