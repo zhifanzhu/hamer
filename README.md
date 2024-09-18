@@ -3,7 +3,7 @@
 Under development.
 
 
-# HaMeR: Hand Mesh Recovery
+# Orignal: HaMeR: Hand Mesh Recovery
 Code repository for the paper:
 **Reconstructing Hands in 3D with Transformers**
 
@@ -11,7 +11,6 @@ Code repository for the paper:
 
 [![arXiv](https://img.shields.io/badge/arXiv-2305.20091-00ff00.svg)](https://arxiv.org/pdf/2312.05251.pdf)  [![Website shields.io](https://img.shields.io/website-up-down-green-red/http/shields.io.svg)](https://geopavlakos.github.io/hamer/)     [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1rQbQzegFWGVOm1n1d-S6koOWDo7F2ucu?usp=sharing)  [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/geopavlakos/HaMeR)
 
-![teaser](assets/teaser.jpg)
 
 ## Installation
 First you need to clone the repo:
