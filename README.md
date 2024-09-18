@@ -1,3 +1,8 @@
+# Put HaMeR output into 3D.
+
+Under development.
+
+
 # HaMeR: Hand Mesh Recovery
 Code repository for the paper:
 **Reconstructing Hands in 3D with Transformers**
